@@ -4,8 +4,12 @@ from datetime import date
 import os
 from dotenv import load_dotenv
 
-from data_manager import load_data
-from calculations import calculate_variation, calculate_adjusted_amount
+from data_manager import get_bcch_indicators, load_data
+from calculations import (
+    calculate_adjusted_amount,
+    calculate_latest_ipc_indicators,
+    calculate_variation
+)
 
 app = FastAPI()
 
@@ -67,6 +71,19 @@ def validate_periods(request):
         )
 
     return data
+
+
+@app.get("/indicadores")
+def get_indicators(_: str = Depends(verify_api_key)):
+    try:
+        bcch_indicators = get_bcch_indicators()
+        ipc_indicators = calculate_latest_ipc_indicators(load_data())
+    except RuntimeError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    return {**bcch_indicators, **ipc_indicators}
 
 @app.post("/ipc")
 def calculate_ipc(
