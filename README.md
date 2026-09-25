@@ -2,7 +2,17 @@
 
 API REST para calcular variaciones del IPC de Chile y reajustar montos asociados a arriendos, sueldos e inflacion. El proyecto fue desarrollado como una solucion backend pequena, clara y facil de consumir desde otros sistemas.
 
-**Estado:** desplegado en Render.
+**Estado:** desplegado en Render, con ambientes de produccion y QA.
+
+## Ambientes
+
+| Ambiente     | Frontend                        | API                                  |
+|--------------|----------------------------------|---------------------------------------|
+| Produccion   | https://calculoschile.cl         | https://api.calculoschile.cl          |
+| QA           | https://qa.calculoschile.cl      | https://api-qa.calculoschile.cl       |
+| Desarrollo   | http://localhost:5173/5174/4173  | http://127.0.0.1:8000                 |
+
+El ambiente activo del backend se determina con la variable de entorno `ENVIRONMENT`, que puede tomar los valores `development` (por defecto), `qa` o `production`. Esta variable define, entre otras cosas, que origenes CORS quedan habilitados (ver [config.py](config.py)).
 
 ## Proposito
 
@@ -37,8 +47,9 @@ El proyecto tambien incluye una interfaz de consola para ejecutar las calculador
 
 ```text
 .
-├── api.py              # Aplicacion FastAPI y endpoints
+├── api.py              # Aplicacion FastAPI, CORS y endpoints
 ├── calculations.py     # Logica de variacion y reajuste de montos
+├── config.py           # Configuracion por ambiente (ENVIRONMENT y CORS)
 ├── data_manager.py     # Lectura de data/ipc.json
 ├── formats.py          # Formateo de valores para la CLI
 ├── main.py             # Interfaz de consola
@@ -51,7 +62,7 @@ El proyecto tambien incluye una interfaz de consola para ejecutar las calculador
 
 ## API
 
-Todos los endpoints requieren el header `X-API-Key`.
+La API es publica y esta pensada para ser consumida directamente por el frontend. El control de acceso a nivel de trafico (WAF, rate limiting, HTTPS) se gestiona en Cloudflare, delante de Render; FastAPI se encarga de CORS, validaciones y logica de negocio.
 
 ### `POST /ipc`
 
@@ -107,7 +118,6 @@ Usa el mismo formato de entrada que `/arriendo` y devuelve la inflacion y el mon
 ```bash
 curl -X POST "https://api.calculoschile.cl/ipc" \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: TU_API_KEY" \
   -d '{"fecha_inicio":"2023-01-01","fecha_fin":"2024-01-01"}'
 ```
 
@@ -145,7 +155,7 @@ pip install -r requirements.txt
 Crear un archivo `.env` local con variables propias:
 
 ```dotenv
-API_KEY=una-clave-local-segura
+ENVIRONMENT=development
 BCCH_TOKEN=un-token-del-banco-central
 ```
 
@@ -165,17 +175,44 @@ python main.py
 
 ## Despliegue en Render
 
-La API se despliega como un servicio web de Python en Render.
+La API se despliega como dos servicios web de Python en Render, uno por ambiente, cada uno apuntando a su propia rama.
 
 - **Build command:** `pip install -r requirements.txt`
 - **Start command:** `uvicorn api:app --host 0.0.0.0 --port $PORT`
-- **Variables de entorno:** `API_KEY` y `BCCH_TOKEN`
+
+### Variables de entorno en Render QA (rama `qa`)
+
+| Variable      | Valor              |
+|---------------|---------------------|
+| `ENVIRONMENT` | `qa`                |
+| `BCCH_TOKEN`  | token del Banco Central |
+
+### Variables de entorno en Render Produccion (rama `main`)
+
+| Variable      | Valor              |
+|---------------|---------------------|
+| `ENVIRONMENT` | `production`        |
+| `BCCH_TOKEN`  | token del Banco Central |
 
 Las variables sensibles deben configurarse en el panel de Render y no deben subirse al repositorio. El archivo `.env` esta excluido mediante `.gitignore`; para documentar la configuracion puede utilizarse un `.env.example` sin valores reales.
 
+## CORS
+
+Los origenes permitidos dependen del ambiente activo (`ENVIRONMENT`) y estan centralizados en [config.py](config.py), sin quedar repartidos por el resto del codigo:
+
+| Ambiente      | Origenes permitidos                                              |
+|---------------|-------------------------------------------------------------------|
+| `development` | `http://localhost:5173`, `http://localhost:5174`, `http://localhost:4173` |
+| `qa`          | `https://qa.calculoschile.cl`                                     |
+| `production`  | `https://calculoschile.cl`, `https://www.calculoschile.cl`         |
+
+La API de produccion no acepta solicitudes CORS desde el frontend de QA, y viceversa. No se utiliza `allow_origins=["*"]` en ningun ambiente.
+
 ## Seguridad
 
-- Los endpoints validan la API key recibida en `X-API-Key`.
+- La API es publica: no requiere API key para ser consumida por el frontend. El control de trafico abusivo (WAF, rate limiting, HTTPS) se realiza en Cloudflare, delante de Render.
+- `BCCH_TOKEN` es un secreto privado del backend, usado unicamente para consultar al Banco Central de Chile, y nunca se expone en respuestas ni en el codigo fuente.
+- Los errores no controlados devuelven un mensaje generico (`Error interno del servidor`); no se exponen stack traces, rutas internas ni variables de entorno al cliente.
 - Las credenciales se gestionan mediante variables de entorno.
 - Los archivos `.env`, claves privadas, certificados, credenciales y artefactos locales estan excluidos del control de versiones.
 - Antes de publicar el proyecto, las credenciales expuestas accidentalmente deben revocarse y regenerarse.

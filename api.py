@@ -1,9 +1,12 @@
-from fastapi import FastAPI, Header, HTTPException, Depends
+import logging
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator, model_validator
 from datetime import date
-import os
-from dotenv import load_dotenv
 
+from config import settings
 from data_manager import get_bcch_indicators, load_data
 from calculations import (
     calculate_adjusted_amount,
@@ -11,20 +14,27 @@ from calculations import (
     calculate_variation
 )
 
+logger = logging.getLogger(__name__)
+
 app = FastAPI()
 
-load_dotenv(override=True)
-API_KEY = os.getenv("API_KEY")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-if not API_KEY:
-    raise RuntimeError("API_KEY no está configurada")
 
-def verify_api_key(x_api_key: str = Header()):
-    if x_api_key != API_KEY:
-        raise HTTPException(
-            status_code=401,
-            detail="API Key inválida"
-        )
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Error no controlado en %s", request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Error interno del servidor"}
+    )
+
 
 class DateRequest(BaseModel):
     fecha_inicio: str
@@ -74,7 +84,7 @@ def validate_periods(request):
 
 
 @app.get("/indicadores")
-def get_indicators(_: str = Depends(verify_api_key)):
+def get_indicators():
     try:
         bcch_indicators = get_bcch_indicators()
         ipc_indicators = calculate_latest_ipc_indicators(load_data())
@@ -86,10 +96,7 @@ def get_indicators(_: str = Depends(verify_api_key)):
     return {**bcch_indicators, **ipc_indicators}
 
 @app.post("/ipc")
-def calculate_ipc(
-    request: IPCRequest,
-    _: str = Depends(verify_api_key)
-):
+def calculate_ipc(request: IPCRequest):
     data = validate_periods(request)
 
     variation = calculate_variation(
@@ -103,10 +110,7 @@ def calculate_ipc(
     }
 
 @app.post("/arriendo")
-def calculate_arriendo(
-    request: AmountRequest,
-    _: str = Depends(verify_api_key)
-):
+def calculate_arriendo(request: AmountRequest):
     data = validate_periods(request)
     
     variation = calculate_variation(
@@ -127,10 +131,7 @@ def calculate_arriendo(
     }
 
 @app.post("/sueldo")
-def calculate_sueldo(
-    request: AmountRequest,
-    _: str = Depends(verify_api_key)
-):
+def calculate_sueldo(request: AmountRequest):
     data = validate_periods(request)
 
     variation = calculate_variation(
@@ -151,10 +152,7 @@ def calculate_sueldo(
     }
 
 @app.post("/inflacion")
-def calculate_inflacion(
-    request: AmountRequest,
-    _: str = Depends(verify_api_key)
-):
+def calculate_inflacion(request: AmountRequest):
     data = validate_periods(request)
 
     variation = calculate_variation(
